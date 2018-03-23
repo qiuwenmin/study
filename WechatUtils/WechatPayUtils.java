@@ -11,13 +11,16 @@ import java.net.URL;
 import java.rmi.ConnectException;
 import java.security.KeyStore;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -33,8 +36,12 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
+import org.dom4j.Document;
+import org.dom4j.Element;
+import org.dom4j.io.SAXReader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
@@ -56,7 +63,169 @@ public class WechatPayUtils {
 	public static final String wechat_pay_notify_url = "wechat_pay_notify_url";
 	public static final String BAR_PAY_CANCLE_URL = "https://api.mch.weixin.qq.com/secapi/pay/reverse";
 	public static final String REFUND_URL = "https://api.mch.weixin.qq.com/secapi/pay/refund";
+	public static final String CALL_BACK_URL = "1111";
+	
+	
+	/**
+	 * 页面支付
+	 * 
+	 * @Title: wechatPay
+	 * @Description: TODO
+	 * @Param @param orderSerial 订单号
+	 * @Param @param money 订单金额
+	 * @Param @param prepay_id 微信预支付订单号(如果必须传)
+	 * @Param @param attach (orders[订单支付]、rechange[充值] guarantee[消费保证金])
+	 * @Param @return
+	 * @Return JsonResponse
+	 * @Throws
+	 */
+	@RequestMapping("doPay")
+	@ResponseBody
+	public JsonResponse wechatPay(String orderSerial, @RequestParam String money, String prepay_id, String attach) {
+		log.info("attach=" + attach);
+		JsonResponse jp = new JsonResponse();
+		String callback = CALL_BACK_URL;
 
+		int _money = new BigDecimal(money.replace(",", "")).multiply(new BigDecimal(100)).intValue();
+		String ip = "192.168.1.0";
+		String body = "";
+		String nonce_str = UUID.randomUUID().toString().replace("-", "");
+		String openid = "";
+		String md5 = "appid=" + WECHAT_APPID + "&attach=" + attach + "&body=" + body + "&mch_id="
+				+ MCH_ID + "&nonce_str=" + nonce_str + "&notify_url=" + callback + "&openid=" + openid
+				+ "&out_trade_no=" + orderSerial + "&spbill_create_ip=" + ip + "&total_fee=" + _money + "&trade_type="
+				+ WECHAT_TRADE_TYPE + "&key=" + WECHAT_PAY_KEY;
+		String sign = MD5.encode(md5).toUpperCase();
+		String param = "<xml><appid>" + WECHAT_APPID + "</appid>" // appid
+				+ "<attach>" + attach + "</attach>" // attach
+				+ "<body>" + body + "</body>" // body
+				+ "<mch_id>" + MCH_ID + "</mch_id>" // 商户名称
+				+ "<nonce_str>" + nonce_str + "</nonce_str>" // 随机字符串，不长于32位
+				+ "<notify_url>" + callback + "</notify_url>" // 回调地址
+				+ "<openid>" + openid + "</openid>" // 用户openid
+				+ "<out_trade_no>" + orderSerial + "</out_trade_no>" // 订单流水
+				+ "<spbill_create_ip>" + ip + "</spbill_create_ip>" // APP和网页支付提交用户端ip
+				+ "<total_fee>" + _money + "</total_fee>" // 总金额 单位分
+				+ "<trade_type>" + WECHAT_TRADE_TYPE + "</trade_type>" // 交易类型
+				+ "<sign>" + sign + "</sign>" + "</xml>";
+		// 解析xml
+		try {
+			Map<String, Object> map = new HashMap<String, Object>();
+			if (null == prepay_id) {
+				String xml = payRequest(PAY_URL, "POST", param);
+				log.info(xml);
+				map = getMapFromXML(xml);
+			} else {
+				map.put("prepay_id", prepay_id);
+			}
+			// {"result_code":"SUCCESS","sign":"E4DAB43CAE134FEE74CF14F874469719","mch_id":"1389234902","prepay_id":"wx2016091817010925b3ecbc620378059580","return_msg":"OK","appid":"wx624ff6dce1c2965f","nonce_str":"7oo2otNoBhwZUWz1","return_code":"SUCCESS","trade_type":"JSAPI"}
+			if (null == map.get("prepay_id")) {
+				Object o = map.get("err_code_des");
+				if (null != o) {
+					//return this.fail(o.toString());
+				} else {
+					//return this.fail("获取prepay_id为null");
+				}
+			}
+			// 微信支付
+			long timestamp = new Date().getTime() / 1000;
+			nonce_str = UUID.randomUUID().toString().replace("-", "");
+			String md5Pay = "appId=" + WECHAT_APPID + "&nonceStr=" + nonce_str + "&package=prepay_id="
+					+ map.get("prepay_id") + "&signType=MD5" + "&timeStamp=" + (timestamp) + "&key="
+					+ WECHAT_PAY_KEY;
+			String paySign = MD5.encode(md5Pay).toUpperCase();
+
+			Map<String, String> retMap = new HashMap<String, String>();
+			retMap.put("appId", WECHAT_APPID);
+			retMap.put("timeStamp", "" + timestamp);
+			retMap.put("nonceStr", nonce_str);
+			retMap.put("_package", "prepay_id=" + map.get("prepay_id"));
+			retMap.put("signType", "MD5");
+			retMap.put("paySign", paySign);
+
+			log.info(retMap);
+			jp.setResult(retMap);
+			return jp;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return jp;
+	}
+
+	/**
+	 * 订单支付完成后 服务端回调方法
+	 */
+	@RequestMapping("jy/notifyPay")
+	@ResponseBody
+	public String notifyPay(HttpServletRequest request, HttpServletResponse response) {
+		String success = "<xml><return_code><![CDATA[SUCCESS]]></return_code><return_msg><![CDATA[OK]]></return_msg></xml>";
+		String fail = null;
+		try {
+			Map<String, String> retMap = parseXml(request);
+			log.info("微信支付回调,回调信息" + retMap);
+			// 此字段是通信标识，非交易标识，交易是否成功需要查看result_code来判断 SUCCESS/FAIL
+			String return_code = retMap.get("return_code");
+			// 业务结果SUCCESS/FAIL
+			String result_code = retMap.get("result_code");
+			// 商户订单号
+			String out_trade_no = retMap.get("out_trade_no");
+			// 微信交易号
+			String transaction_id = retMap.get("transaction_id");
+			// 用户在商户appid下的唯一标识
+			String openid = retMap.get("openid");
+			// 支付完成时间
+			String time_end = retMap.get("time_end");
+			// 订单总金额
+			String priceStr = retMap.get("total_fee");
+			String attach = retMap.get("attach");
+
+
+			// 计算得出通知验证结果
+			if ("SUCCESS".equals(return_code) && "SUCCESS".equals(result_code)) {
+				// 订单
+				if ("orders".equals(attach)) {
+					String price = String.valueOf(Double.parseDouble(priceStr) / 100D);
+					//业务逻辑
+					//ordersService.callBackPay(out_trade_no, price, transaction_id, openid, 3);
+				}
+				return success;
+			}
+			fail = "<xml><return_code><![CDATA[FAIL]]></return_code><return_msg><![CDATA[" + retMap.get("return_msg")
+					+ "]]></return_msg></xml>";
+		} catch (Exception e) {
+			e.printStackTrace();
+			fail = "<xml><return_code><![CDATA[FAIL]]></return_code><return_msg><![CDATA[" + e.getMessage()
+					+ "]]></return_msg></xml>";
+		}
+		log.info(fail);
+		return fail;
+	}
+	
+	/**
+	 * 解析request中的xml 并将数据存储到一个Map中返回
+	 * 
+	 * @param request
+	 */
+	public static Map<String, String> parseXml(HttpServletRequest request) {
+		Map<String, String> map = new HashMap<String, String>();
+		try {
+			InputStream inputStream = request.getInputStream();
+			SAXReader reader = new SAXReader();
+			Document document = reader.read(inputStream);
+			Element root = document.getRootElement();
+			List<Element> elementList = root.elements();
+			for (Element e : elementList) {
+				// 遍历xml将数据写入map
+				map.put(e.getName(), e.getText());
+				System.out.println("接收内容:" + e.getName() + ":" + e.getText());
+			}
+			inputStream.close();
+			inputStream = null;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return map;
+	}
 	/**
 	 * 微信统一支付,生成二维码链接
 	 * 
@@ -190,7 +359,7 @@ public class WechatPayUtils {
 		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
 		DocumentBuilder builder = factory.newDocumentBuilder();
 		InputStream is = getStringStream(xmlString);
-		Document document = builder.parse(is);
+		org.w3c.dom.Document document = builder.parse(is);
 
 		// 获取到document里面的全部结点
 		NodeList allNodes = document.getFirstChild().getChildNodes();
