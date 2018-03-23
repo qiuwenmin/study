@@ -1,0 +1,13 @@
+需要引入alipay1.0、2.0
+1.0主要是解析notify_url
+<dependency>
+		 <groupId>com.alipay</groupId>
+		 <artifactId>alipay-lib</artifactId>
+		 <version>1.0</version>
+</dependency>
+	
+<dependency>
+		  <groupId>com.alibaba</groupId>
+		  <artifactId>alipay</artifactId>
+		  <version>2.0</version>
+</dependency>    
